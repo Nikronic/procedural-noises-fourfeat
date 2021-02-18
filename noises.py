@@ -5,10 +5,10 @@ class OctavePerlin:
     # refs:
     ## 1. http://staffwww.itn.liu.se/~stegu/simplexnoise/simplexnoise.pdf
     ## 2. https://gist.github.com/adefossez/0646dbe9ed4005480a2407c62aac8869
-    def __init__(self, height=15, width=15):
+    def __init__(self, height=15, width=15, device=None):
         self.height = height
         self.width = width
-        self.device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
+        self.device = 'cuda:0' if (torch.cuda.is_available() and device is not None)  else 'cpu'
 
     def __call__(self, rho, n_octaves):
         """
@@ -16,12 +16,20 @@ class OctavePerlin:
 
         :param rho: Base scale for each octave rho^(-i)
         :param n_octaves: Number of octaves to be used
+        :return: a ``(height*scale, width*scale)`` Perlin noise with ``len(octaves)`` octaves
         """
 
         out = self.perlin_ms(octaves=[rho**-i for i in range(n_octaves)], device=self.device)
         return out
     
     def perlin_ms(self, octaves, device=None):
+        """
+        Generates a multi-scale Perlin Noise
+
+        :param octaves: A list of magnitude of octaves
+        :return: a ``(height*scale, width*scale)`` Perlin noise with ``len(octaves)`` octaves
+        """
+
         height = self.height
         width = self.width
 
@@ -36,6 +44,13 @@ class OctavePerlin:
         return out
         
     def perlin(self, width, height, scale, device=None):
+        """
+        Generates Simplex Perlin noise for given height, width and scale
+
+        :param height: Height of grid
+        :param width: Width of grid
+        :param scale: Scaler of gridsize
+        """
         gx, gy = torch.randn(2, width + 1, height + 1, 1, 1, device=device)
         xs = torch.linspace(0, 1, scale + 1)[:-1, None].to(device)
         ys = torch.linspace(0, 1, scale + 1)[None, :-1].to(device)
@@ -60,6 +75,7 @@ class OctavePerlin:
             so that they will ease towards integral values. This ends up smoothing the final output.
 
         :param t: coordinates
+        :return: Interpolation of coordinates
         """
 
         return 3 * t**2 - 2 * t ** 3
@@ -73,10 +89,12 @@ class OctavePerlin:
             so that they will ease towards integral values. This ends up smoothing the final output.
 
         :param t: coordinates
+        :return: Interpolation of coordinates
         """
 
         return 6 * t ** 5 - 15 * t ** 4 + 10 * t ** 3
 
 ## test
 # octave_perlin = OctavePerlin(12, 12)
-# z2 = octave_perlin(rho, 4)
+# z1 = octave_perlin(2, 3)
+# print(z1.shape)

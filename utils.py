@@ -1,13 +1,12 @@
 import torch
 from torch.utils.data import Dataset
 
-import numpy as np
+import noises
 
+import numpy as np
 from collections import namedtuple
-import pandas as pd
 
 import os, sys
-import json
 from datetime import datetime
 
 
@@ -106,6 +105,43 @@ class SupervisedMeshGrid(Dataset):
         gt_densities = gt_densities.permute(1, 0).unsqueeze(0)
 
         return get_mgrid(self.sidelen, self.domain, self.flatten), -gt_densities
+
+
+class PerlinMeshGrid(Dataset):
+    def __init__(self, sidelen, domain, rho, n_octaves, mode='octave_simplex', flatten=True):
+        """
+        Generates a mesh grid matrix of equally distant coordinates for a ground truth target with same grid size which is
+        a Perlin noise where supports multi-octave and specified by its algorith 
+
+        :param sidelen: Grid dimensions (number of nodes along each dimension)
+        :param domain: Domain boundry
+        :param rho: See ``noises.OctavePerlin`` class
+        :param n_octaves: See ``noises.OctavePerlin`` class
+        :param mode: Mode of Perlin noise: 1. ``octave_simplex``
+        :param flatten: whether or not flatten the final grid (-1, 2 or 3)
+        :return: Meshgrid of coordinates (elements, 2 or 3)
+        """
+        super().__init__()
+        self.coor_sidelen = sidelen[1]
+        self.octave_sidelen = sidelen[0]
+        self.domain = domain
+        self.flatten = flatten
+        self.mode = mode
+        self.rho = rho
+        self.n_octave = n_octaves
+
+    def __len__(self):
+        return 1
+
+    def __getitem__(self, idx):
+        if idx > 0:
+            raise IndexError
+        
+        if self.mode == 'octave_simplex':
+            octave_perlin = noises.OctavePerlin(height=self.octave_sidelen[0], width=self.octave_sidelen[1], device=None)
+            output_noise = octave_perlin(rho=self.rho, n_octaves=self.n_octave)
+
+        return get_mgrid(self.coor_sidelen, self.domain, self.flatten), output_noise
 
 
 class RandomField(Dataset):
