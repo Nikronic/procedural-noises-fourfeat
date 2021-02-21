@@ -5,12 +5,23 @@ class OctavePerlin:
     # refs:
     ## 1. http://staffwww.itn.liu.se/~stegu/simplexnoise/simplexnoise.pdf
     ## 2. https://gist.github.com/adefossez/0646dbe9ed4005480a2407c62aac8869
-    def __init__(self, height=15, width=15, device=None):
+    def __init__(self, height=15, width=15, rho=2, n_octaves=4, device=None):
+        """
+        :param height: Height of grid
+        :param width: Width of grid
+        :param rho: Base scale for each octave rho^(-i)
+        :param n_octaves: Number of octaves to be used
+        """
+
         self.height = height
         self.width = width
         self.device = 'cuda:0' if (torch.cuda.is_available() and device is not None)  else 'cpu'
+        self.data = self.populate_grid(rho=rho, n_octaves=n_octaves, device=self.device)
 
-    def __call__(self, rho, n_octaves):
+    def __call__(self):
+        return self.data
+
+    def populate_grid(self, rho, n_octaves, device=None):
         """
         Computes Perlin Simplex noise over multiple octaves (one octave can be used too)
 
@@ -19,7 +30,7 @@ class OctavePerlin:
         :return: a ``(height*scale, width*scale)`` Perlin noise with ``len(octaves)`` octaves
         """
 
-        out = self.perlin_ms(octaves=[rho**-i for i in range(n_octaves)], device=self.device)
+        out = self.perlin_ms(octaves=[rho**-i for i in range(n_octaves)], device=device)
         return out
     
     def perlin_ms(self, octaves, device=None):

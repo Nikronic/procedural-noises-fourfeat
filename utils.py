@@ -108,7 +108,7 @@ class SupervisedMeshGrid(Dataset):
 
 
 class PerlinMeshGrid(Dataset):
-    def __init__(self, sidelen, domain, rho, n_octaves, mode='octave_simplex', flatten=True):
+    def __init__(self, sidelen, domain, rho, n_octaves, stochasticity='stochastic', ratio=0.5, mode='octave_simplex', flatten=True):
         """
         Generates a mesh grid matrix of equally distant coordinates for a ground truth target with same grid size which is
         a Perlin noise where supports multi-octave and specified by its algorith 
@@ -117,6 +117,8 @@ class PerlinMeshGrid(Dataset):
         :param domain: Domain boundry
         :param rho: See ``noises.OctavePerlin`` class
         :param n_octaves: See ``noises.OctavePerlin`` class
+        :param stochastic: Wether or not create a new for sampling everytime ``__getitem__`` is being called
+        :param ratio: Mask ratio (stochastic - may not create the exact number of zero/ones in mask)
         :param mode: Mode of Perlin noise: 1. ``octave_simplex``
         :param flatten: whether or not flatten the final grid (-1, 2 or 3)
         :return: Meshgrid of coordinates (elements, 2 or 3)
@@ -129,6 +131,10 @@ class PerlinMeshGrid(Dataset):
         self.mode = mode
         self.rho = rho
         self.n_octave = n_octaves
+        self.stochasticity = stochasticity
+        self.ratio = ratio
+        self.input, self.output = self.populate_data()
+        self.mask = self.compute_new_mask(ratio=self.ratio)
 
     def __len__(self):
         return 1
@@ -136,12 +142,47 @@ class PerlinMeshGrid(Dataset):
     def __getitem__(self, idx):
         if idx > 0:
             raise IndexError
-        
-        if self.mode == 'octave_simplex':
-            octave_perlin = noises.OctavePerlin(height=self.octave_sidelen[0], width=self.octave_sidelen[1], device=None)
-            output_noise = octave_perlin(rho=self.rho, n_octaves=self.n_octave)
+    
+        if self.stochasticity == 'stochastic':
+            # uses a new mask for every call
+            self.mask = self.compute_new_mask(ratio=self.ratio)
+            return self.sample()
+        elif self.stochasticity == 'deterministic_randinit':
+            # uses the same mask all the time
+            return self.sample()
+        elif self.stochasticity == 'deterministic_gridinit':
+            # uses a subgrid of original grid all the time
+            step =  int(1 / self.ratio)
+            output = self.output[::step, ::step]
+            input_coords = get_mgrid(list(output.shape), self.domain, self.flatten) 
+            return input_coords, output 
+        else:
+            raise ValueError('Stochasticity {} is not defined or implemented'.format(self.stochasticity))
 
-        return get_mgrid(self.coor_sidelen, self.domain, self.flatten), output_noise
+    def sample(self):
+        mask = self.mask
+
+        output = self.output.flatten()
+        output = output[mask]
+
+        input_coords = self.input
+        input_coords = input_coords[mask]
+        
+        return input_coords, output
+
+    def populate_data(self):
+        if self.mode == 'octave_simplex':
+            octave_perlin = noises.OctavePerlin(height=self.octave_sidelen[0], width=self.octave_sidelen[1],
+                                                rho=self.rho, n_octaves=self.n_octave, device=None)
+            output_noise = octave_perlin()
+        input_coords = get_mgrid(self.coor_sidelen, self.domain, self.flatten)
+        return input_coords, output_noise
+    
+    def compute_new_mask(self, ratio=0.5):
+        mask = torch.rand_like(self.input[..., 0]) > (1 - ratio)
+        # with this mask, you may not get a grid shaped output, so we use flattened output to be masked
+        ## this enables us to use any ratio for our mask without considering a **square** output grid
+        return mask
 
 
 class RandomField(Dataset):

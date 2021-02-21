@@ -6,13 +6,11 @@ import torch.autograd.profiler as profiler
 
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from networks import MLP
-from utils import MeshGrid
 import utils
 import multires_utils
 import visualizations
 
 import numpy as np
-from math import pi
 
 import matplotlib as mpl
 mpl.use('Agg')
@@ -21,11 +19,9 @@ from matplotlib import cm
 import seaborn as sns
 
 from tqdm import tqdm
-import json, time
+import time
 import argparse
-from datetime import datetime
 import itertools
-import copy
 
 
 parser=argparse.ArgumentParser()
@@ -45,25 +41,33 @@ interpolation = False
 fixed_scale = True
 fixed_resolution = True
 
-problem_path = 'problems/2d/mbb_beam.json'  # TODO
-max_resolution = [300, 100]  # TODO
+problem_name = 'OctaveSimplexPerlin'  # TODO
+n_octaves = 4  # TODO
+rho = 2  # TODO
+sampling_rate = 1.0  # TODO
+sampling_mode = 'deterministic_gridinit'  # TODO
+max_resolution = np.array([18, 18]).reshape(1, -1)  # TODO
+max_resolution = np.concatenate([max_resolution, ((max_resolution*2)*(2**(n_octaves-1)))], axis=0)
+
+pconfprint = 'Problem configs: \n'
+pconfprint += 'Problem Name: {}, Number of Octaves: {}, Rho: {}\n'.format(problem_name, n_octaves, rho)
+pconfprint += 'Sampling Rate: {} using {} Sampling Method\n'.format(sampling_rate, sampling_mode)
+pconfprint += 'Perlin Noise Input Grid: {}, Output Grid: {}'.format(max_resolution[0], max_resolution[1])
+sys.stderr.write(pconfprint)
 
 # record runtime
 start_time = time.perf_counter()
 
 # multires hyperparameters for single res
-adaptive_filtering_configs = [0.1, -1, 0.1, -1, 0.1, 1]  # (0<...<1, -x) means (no update, no usage) filters respectively
-volume_constraint_satisfier = 'thresholded_barrier'
-is_volume_constraint_satisfier_hard = fem.type_of_volume_constaint_satisfier(mode=volume_constraint_satisfier)
 weight_decay = 0  # TODO
 use_scheduler = False
-forgetting_weights = 'orthogonal'  # TODO
-forgetting_activations = None  # TODO
-rate = 0.4  # TODO
+forgetting_weights = None  # TODO
+forgetting_activations = 'dropout'  # TODO
+rate = 0.0  # TODO
 res_order = 'ftc'
-repeat_res = 10  # TODO
+repeat_res = 5  # TODO
 epoch_mode = 'constant'
-resolutions = multires_utils.prepare_resolutions(interval=0, start=0, end=1, order=res_order, repeat_res=repeat_res)  # TODO
+resolutions = multires_utils.prepare_resolutions(interval=0, start=0, end=1, order=res_order, repeat_res=repeat_res)[:-1]  # TODO
 epoch_sizes = multires_utils.prepare_epoch_sizes(n_resolutions=len(resolutions), # TODO
                                                  start=300, end=2500, 
                                                  mode=epoch_mode, constant_value=1500)
@@ -72,10 +76,13 @@ mrconfprint += 'forgetting_weights: {}, forgetting_activations: {}, rate: {}\n'.
                                                                                        forgetting_activations,
                                                                                        rate)
 mrconfprint += 'repeat resolutions: {} times \n'.format(repeat_res)
-mrconfprint += 'adaptive filtering configs: {} \n'.format(adaptive_filtering_configs)
-mrconfprint += 'Volume constraint satisfier: {} (hard: {})\n'.format(volume_constraint_satisfier,
-                                                                     is_volume_constraint_satisfier_hard)
 sys.stderr.write(mrconfprint)
+
+# for plotting purposes
+if forgetting_weights is not None:
+    forgetting_title = 'forget_W{}'.format(forgetting_weights)
+if forgetting_activations is not None:
+    forgetting_title = 'forget_A{}'.format(forgetting_activations)
 
 # create experiments folders for each run  
 log_base_path = 'logs/'
@@ -93,62 +100,27 @@ if not fixed_scale:
     interval_scale = 0.5
     scale = np.arange(60) * interval_scale + interval_scale
 else:
-    scale = [27.0]  # TODO
+    scale = [5.0]  # TODO
 
 embedding_size = 256
 sys.stderr.write('scale: {}, fourier embedding size: {}\n'.format(scale, embedding_size))
 
-with open(problem_path, 'r') as j:
-     configs = json.loads(j.read())
-
-# hyperparameters of the problem 
-problem_name = configs['problem_name']
-MATERIAL_PATH = configs['MATERIAL_PATH']
-BC_PATH = configs['BC_PATH']
-orderFEM = configs['orderFEM']
-domainCorners = configs['domainCorners']
-gridDimensions = configs['gridDimensions']
-E0 = configs['E0']
-Emin = configs['Emin']
-SIMPExponent = configs['SIMPExponent']
-maxVolume = torch.tensor(configs['maxVolume'])
-if adaptive_filtering_configs is None:
-    adaptive_filtering_configs = configs['adaptive_filtering']
-seed = configs['seed']
-sys.stderr.write('VoxelFEM problem configs: {}\n'.format(configs))
-
-gridDimensions_ = copy.deepcopy(gridDimensions)
-
-if max_resolution is None:
-    max_resolution = gridDimensions
-
 # reproducibility
+seed = 8
 torch.manual_seed(seed)
 np.random.seed(seed)
 
-if torch.cuda.is_available():
-    maxVolume = maxVolume.cuda()
-
-domain = np.array([[0., 1.],[0., 1.]])
-
 # deep learning modules
-if is_volume_constraint_satisfier_hard:
+if forgetting_activations == 'dropout':
     nerf_model = MLP(in_features=2, out_features=1, n_neurons=256, n_layers=4, embedding_size=embedding_size,
-                     scale=scale[0], hidden_act=nn.ReLU(), output_act=None)
+                     scale=scale[0], dropout_rate=rate, hidden_act=nn.ReLU(), output_act=None)
 else:
     nerf_model = MLP(in_features=2, out_features=1, n_neurons=256, n_layers=4, embedding_size=embedding_size,
-                     scale=scale[0], hidden_act=nn.ReLU(), output_act=nn.Sigmoid())
+                     scale=scale[0], hidden_act=nn.ReLU(), output_act=None)
 model = nerf_model
 if torch.cuda.is_available():
     model.cuda()
-
 sys.stderr.write('Deep learning model config: {}\n'.format(model))
-
-# filtering
-projection_filter = filtering.ProjectionFilter(beta=1)
-smoothing_filter = filtering.SmoothingFilter(radius=1)
-gauss_smoothing_filter = filtering.GaussianSmoothingFilter(sigma=1)
-filters = [projection_filter, smoothing_filter, gauss_smoothing_filter]
 
 if weight_decay > 0:
     learning_rate = 1e-3
@@ -156,12 +128,24 @@ else:
     learning_rate = 1e-4
 
 optim = torch.optim.Adam(lr=learning_rate, params=itertools.chain(list(model.parameters())), weight_decay=weight_decay)
+criterion = nn.MSELoss(reduction='sum')
 # reduce on plateau
 scheduler = None
 if use_scheduler:
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer=optim, mode='min', patience=20)
-sys.stderr.write('DL optim: {}, LR scheduler: {}\n'.format(optim, scheduler))
+sys.stderr.write('Criterion: {}, DL optim: {}, LR scheduler: {}\n'.format(criterion, optim, scheduler))
 sys.stderr.write('L2 Regularization: {}\n'.format(weight_decay))
+
+# prepare dataset
+domain = np.array([[0., 1.],[0., 1.]])
+dataset = utils.PerlinMeshGrid(sidelen=max_resolution, domain=domain, rho=rho, n_octaves=n_octaves,
+                               stochasticity=sampling_mode, ratio=sampling_rate,
+                               mode='octave_simplex')
+dataloader = DataLoader(dataset, batch_size=1, pin_memory=True, num_workers=0)
+max_resolution_model_input, max_resolution_ground_truth = dataset.input, dataset.output
+if torch.cuda.is_available():
+    max_resolution_model_input = max_resolution_model_input.cuda()
+    max_resolution_ground_truth = max_resolution_ground_truth.cuda()
 
 # training
 batch_size = 1
@@ -170,35 +154,8 @@ compliance_loss_array = []
 
 for idx, res in enumerate(resolutions):
     for s in scale:
-
+        # in case of getting overriden by disabling activation forgetting
         model.train()
-
-        gridDimensions = tuple(np.array(gridDimensions_) + res * np.array(domainCorners[1]))
-        sys.stderr.write('New resolution within loop: {}\n'.format(gridDimensions))
-
-        if torch.cuda.is_available():
-            maxVolume = maxVolume.cuda()
-
-        # deep learning modules
-        dataset = MeshGrid(sidelen=gridDimensions, domain=domain, flatten=False)
-        dataloader = DataLoader(dataset, batch_size=1, pin_memory=True, num_workers=0)
-        model_input = next(iter(dataloader))
-
-        # we dont want to update input in nerf so dont enable grads here
-        if torch.cuda.is_available():
-            model_input = model_input.cuda()
-
-        # topopt (via VoxelFEM-Optimization-Problem)
-        constraints = [pyVoxelFEM.TotalVolumeConstraint(maxVolume)]
-        uniformDensity = maxVolume
-        tps = initializeTensorProductSimulator(
-            orderFEM, domainCorners, gridDimensions, uniformDensity, E0, Emin, SIMPExponent, MATERIAL_PATH, BC_PATH
-        )                                                                                  
-        objective = pyVoxelFEM.ComplianceObjective(tps)                                    
-        top = pyVoxelFEM.TopologyOptimizationProblem(tps, objective, constraints, []) 
-
-        # instantiate autograd.Function for VoxelFEM engine
-        voxelfem_engine = VoxelFEMFunction.apply
 
         # save loss values for plotting
         compliance_loss_array_res = []
@@ -211,13 +168,9 @@ for idx, res in enumerate(resolutions):
         
         # apply 'forgetting' for activations
         if forgetting_activations is not None:
-            model.register_gated_activations(model_input, rate=rate)
-            sys.stderr.write('Activation forgetting has been applied. \n')
-
-        # reset adaptive filtering
-        for filt in filters:
-            filt.reset_params()  # type: ignore
-        sys.stderr.write('Adaptive filtering has been reset to their defaults. \n')
+            # TODO: gated_activation does not work (needs dynamic input)
+            multires_utils.forget_activations(model=model, model_input=None, mode=forgetting_activations,
+                                              rate=rate)
 
         # training of xPhys
         for step in tqdm(range(epoch_sizes[idx]), desc='Training: '):
@@ -225,50 +178,46 @@ for idx, res in enumerate(resolutions):
             def closure():
                 optim.zero_grad()
 
-                # aka x
-                density = model(model_input)
-                density = density.view(gridDimensions)
-
-                # aka xPhys
-                if is_volume_constraint_satisfier_hard:
-                    density = fem.satisfy_volume_constraint(density=density, max_volume=maxVolume, compliance_loss=None,
-                                                            mode=volume_constraint_satisfier)
-                else: 
-                    density = torch.clamp(density, min=0., max=1.)
-
-                # adaptive filtering
-                if adaptive_filtering_configs is not None:
-                    density = filtering.apply_filters_group(x=density, filters=filters, configs=adaptive_filtering_configs)
-                    filtering.update_adaptive_filtering(iteration=step, filters=filters, configs=adaptive_filtering_configs)
-                
-                # compliance for predicted xPhys
-                if torch.cuda.is_available():
-                    density = density.cpu()
-                compliance_loss = voxelfem_engine(density.flatten(), top)
-                if torch.cuda.is_available():
-                    compliance_loss.cuda()
-
                 global actual_steps
                 actual_steps += 1
 
-                # for 'soft' volume constraint 
-                if not is_volume_constraint_satisfier_hard:
-                    volume_loss = fem.satisfy_volume_constraint(density=density, max_volume=maxVolume,
-                                                                compliance_loss=compliance_loss, scaler_mode='clip', constant=500,
-                                                                mode=volume_constraint_satisfier)
-                    sys.stderr.write('\n{} with mode: {} with constant: {} -> v-loss={}\n'.format(volume_constraint_satisfier,
-                                                                                'clip', 500, volume_loss.clone().detach().item()))
-                    compliance_loss = compliance_loss + volume_loss
+                model_input, ground_truth = next(iter(dataloader))
+                if torch.cuda.is_available():
+                    model_input = model_input.cuda()
+                    ground_truth = ground_truth.cuda()
 
+                density = model(model_input)
+                density = density.view(ground_truth.shape)
+
+                compliance_loss = criterion(density, ground_truth)
                 compliance_loss.backward()
 
                 # reduce LR if no reach plateau
                 if use_scheduler:
                     scheduler.step(compliance_loss)
 
+                # test model with FORGETTING DISABLED at every resolution
+                if (step+1) % (epoch_sizes[idx]) == 0:
+                    with torch.no_grad():
+                        model.eval()  # disable forgetting (eg dropout)
+                        sys.stderr.write('Visualizing (wo forgetting) output at iteration: "{}" for resolution: "{}"\n'.format(actual_steps,
+                                                                                                                            density.shape))
+
+                        density = model(max_resolution_model_input)
+                        density = density.view(max_resolution_ground_truth.shape)
+                        t_loss = criterion(density, max_resolution_ground_truth)
+
+                        # visualization
+                        grid_title = ''.join(str(i)+'x' for i in density.shape)[:-1]
+                        title = 'FF(woFgt)_s'+str(scale)+'_'+forgetting_title+str(rate)+'_'+grid_title+'_'+str(idx+1)+'x'+str(actual_steps)
+                        title +=  '_'+problem_name+'_octRho'+str(n_octaves)+'x'+str(rho)+'_'+sampling_mode+'x'+str(sampling_rate)
+                        visualizations.density_vis(density, t_loss, tuple(density.shape), title, True, visualize, True,
+                                                binary_loss=None, path=log_image_path)
+                        model.train()  # enable forgetting (eg dropout)
+
                 # save loss values for plotting
                 compliance_loss_array_res.append(compliance_loss.detach().item())
-                sys.stderr.write("Total Steps: %d, Resolution Steps: %d, Compliance loss %0.6f" % (actual_steps, step, compliance_loss))
+                sys.stderr.write("Total Steps: %d, Resolution Steps: %d, Compliance loss %0.6f \n" % (actual_steps, step, compliance_loss))
 
                 return compliance_loss
 
@@ -276,127 +225,16 @@ for idx, res in enumerate(resolutions):
 
         compliance_loss_array.extend(compliance_loss_array_res)
 
-        # test model with FORGETTING ENABLED
-        density = model(model_input)
-        if is_volume_constraint_satisfier_hard:
-            density = fem.satisfy_volume_constraint(density=density, max_volume=maxVolume, compliance_loss=None,
-                                                    mode=volume_constraint_satisfier)
-        else: 
-            density = torch.clamp(density, min=0., max=1.)
-
-        # loss of conversion to binary by thresholding
-        binary_compliance_loss = utils.compute_binary_compliance_loss(density=density, top=top,
-                                                                      loss_engine=voxelfem_engine)
-
-        # visualization and saving model
-        grid_title = ''.join(str(i)+'x' for i in gridDimensions)[:-1]
-        adaptive_filtering_configs_title = ''.join(str(i)+'|' for i in adaptive_filtering_configs)[:-1]
-        maxVolume_np = maxVolume.detach().cpu().numpy()
-        if forgetting_weights is not None:
-            forgetting_title = 'forget_W{}'.format(forgetting_weights)
-        if forgetting_activations is not None:
-            forgetting_title = 'forget_A{}'.format(forgetting_activations)
-
-        title = 'FF(wFgt_HC'+str(is_volume_constraint_satisfier_hard)+')_s'+str(scale)+'_'+forgetting_title+str(rate)+'_'+grid_title+'_'+str(idx+1)+'x'+str(actual_steps)
-        title += '_dec'+str(weight_decay)+'_'+problem_name+'_Vol'+str(maxVolume_np)+'_F'+adaptive_filtering_configs_title
-        title = visualizations.loss_vis(compliance_loss_array_res, title, True, path=log_loss_path)
-        visualizations.density_vis(density, compliance_loss_array_res[-1], gridDimensions, title, True, visualize, True,
-                                   binary_loss=binary_compliance_loss, path=log_image_path)
-
-        # test model with FORGETTING DISABLED (activation for now)
-        if forgetting_activations is not None:
-            model.eval()        
-  
-        # test model with weight FORGETTING DISABLED (INVALID operation! omitted)
-        if forgetting_weights is not None:
-            sys.stderr.write('Disabling forgetting and density plot have been omitted (does not make sense) \n')
-            sys.stderr.write('Instead, we will plot densities queried for max resolution.\n')
-
-        density = model(model_input)
-        if is_volume_constraint_satisfier_hard:
-            density = fem.satisfy_volume_constraint(density=density, max_volume=maxVolume, compliance_loss=None,
-                                                    mode=volume_constraint_satisfier)
-        else:
-            density = torch.clamp(density, min=0., max=1.)
-
-        # loss of conversion to binary by thresholding
-        binary_compliance_loss = utils.compute_binary_compliance_loss(density=density, top=top,
-                                                                      loss_engine=voxelfem_engine)
-
-        if forgetting_activations is not None:
-            title = 'FF(woFgt)_s'+str(scale)+'_'+forgetting_title+str(rate)+'_'+grid_title+'_'+str(idx+1)+'x'+str(actual_steps)
-            title += '_dec'+str(weight_decay)+'_'+problem_name+'_Vol'+str(maxVolume_np)+'_F'+adaptive_filtering_configs_title
-            title = visualizations.loss_vis(compliance_loss_array_res, title, True, path=log_loss_path)
-            visualizations.density_vis(density, compliance_loss_array_res[-1], gridDimensions, title, True, visualize, True,
-                                       binary_loss=binary_compliance_loss, path=log_image_path)
-        
-        if forgetting_weights is not None:
-            # now query for max resolution
-            test_resolution = max_resolution
-            dataset = MeshGrid(sidelen=test_resolution, domain=domain, flatten=False)
-            dataloader = DataLoader(dataset, batch_size=1, pin_memory=True, num_workers=0)
-            model_input = next(iter(dataloader))
-            if torch.cuda.is_available():
-                model_input = model_input.cuda()
-
-            # topopt (via VoxelFEM-Optimization-Problem)
-            constraints = [pyVoxelFEM.TotalVolumeConstraint(maxVolume)]
-            uniformDensity = maxVolume
-            tps = initializeTensorProductSimulator(
-                orderFEM, domainCorners, test_resolution, uniformDensity, E0, Emin, SIMPExponent, MATERIAL_PATH, BC_PATH
-            )                                                                                  
-            objective = pyVoxelFEM.ComplianceObjective(tps)                                    
-            top = pyVoxelFEM.TopologyOptimizationProblem(tps, objective, constraints, []) 
-            # maxVolume = torch.tensor(maxVolume)
-            if torch.cuda.is_available():
-                maxVolume = maxVolume.cuda()
-            voxelfem_engine = VoxelFEMFunction.apply
-
-            with torch.no_grad():
-                model.eval()
-                density = model(model_input)
-                if is_volume_constraint_satisfier_hard:
-                    density = fem.satisfy_volume_constraint(density=density, max_volume=maxVolume, compliance_loss=None,
-                                                            mode=volume_constraint_satisfier)
-                else:
-                    density = torch.clamp(density, min=0., max=1.)
-
-            # loss of conversion to binary by thresholding
-            binary_compliance_loss = utils.compute_binary_compliance_loss(density=density, top=top,
-                                                                          loss_engine=voxelfem_engine)
-            if torch.cuda.is_available():
-                density = density.cpu()
-            compliance_loss = voxelfem_engine(density.flatten(), top)
-
-            title = 'FF(wFgt_HC'+str(is_volume_constraint_satisfier_hard)+'_max)_s'+str(scale)+'_'+forgetting_title+str(rate)+'_'+grid_title+'_'+str(idx+1)+'x'+str(actual_steps)
-            title += '_dec'+str(weight_decay)+'_'+problem_name+'_Vol'+str(maxVolume_np)+'_F'+adaptive_filtering_configs_title
-            visualizations.density_vis(density, compliance_loss, max_resolution, title, True, visualize, True,
-                                       binary_loss=binary_compliance_loss, path=log_image_path)
-
 
 # recording run time
 execution_time = time.perf_counter() - start_time
 sys.stderr.write('Overall runtime: {}\n'.format(execution_time))
 
-# now query for max resolution
+# now query for max resolution after training finished
 test_resolution = max_resolution
-dataset = MeshGrid(sidelen=test_resolution, domain=domain, flatten=False)
-dataloader = DataLoader(dataset, batch_size=1, pin_memory=True, num_workers=0)
-model_input = next(iter(dataloader))
 if torch.cuda.is_available():
-    model_input = model_input.cuda()
-
-# topopt (via VoxelFEM-Optimization-Problem)
-constraints = [pyVoxelFEM.TotalVolumeConstraint(maxVolume)]
-uniformDensity = maxVolume
-tps = initializeTensorProductSimulator(
-    orderFEM, domainCorners, test_resolution, uniformDensity, E0, Emin, SIMPExponent, MATERIAL_PATH, BC_PATH
-)                                                                                  
-objective = pyVoxelFEM.ComplianceObjective(tps)                                    
-top = pyVoxelFEM.TopologyOptimizationProblem(tps, objective, constraints, [])
-if torch.cuda.is_available():
-    maxVolume = maxVolume.cuda()
-voxelfem_engine = VoxelFEMFunction.apply
+    max_resolution_model_input = max_resolution_model_input.cuda()
+    max_resolution_ground_truth = max_resolution_ground_truth.cuda()
 
 # test model without activation FORGETTING ENABLED
 if forgetting_activations is not None:
@@ -408,31 +246,23 @@ if forgetting_weights is not None:
 
 with torch.no_grad():
     model.eval()
-    density = model(model_input)
-    if is_volume_constraint_satisfier_hard:
-        density = fem.satisfy_volume_constraint(density=density, max_volume=maxVolume, compliance_loss=None,
-                                                mode=volume_constraint_satisfier)
-    else:
-        density = torch.clamp(density, min=0., max=1.)
+    density = model(max_resolution_model_input)
+    density = density.view(max_resolution_ground_truth.shape)
 
-# loss of conversion to binary by thresholding
-binary_compliance_loss = utils.compute_binary_compliance_loss(density=density, top=top,
-                                                              loss_engine=voxelfem_engine)
-if torch.cuda.is_available():
-    density = density.cpu()
-compliance_loss = voxelfem_engine(density.flatten(), top)
-maxVolume_np = maxVolume.detach().cpu().numpy()
-grid_title = ''.join(str(i)+'x' for i in test_resolution)[:-1]
-adaptive_filtering_configs_title = ''.join(str(i)+'|' for i in adaptive_filtering_configs)[:-1]
-title = 'FF(woFgt_HC'+str(is_volume_constraint_satisfier_hard)+'_test)_s'+str(scale)+'_'+forgetting_title+str(rate)+'_'+grid_title+'_'+str(actual_steps)
-title += '_dec'+str(weight_decay)+'_'+problem_name+'_Vol'+str(maxVolume_np)+'_F'+adaptive_filtering_configs_title
-visualizations.density_vis(density, compliance_loss, max_resolution, title, True, visualize, True,
-                           binary_loss=binary_compliance_loss, path=log_image_path)
-title = 'FF(woFgt_HC'+str(is_volume_constraint_satisfier_hard)+'_overall)_s'+str(scale)+'_'+forgetting_title+str(rate)+'_'+grid_title+'_'+str(actual_steps)
-title += '_dec'+str(weight_decay)+'_'+problem_name+'_Vol'+str(maxVolume_np)+'_F'+adaptive_filtering_configs_title
+compliance_loss = criterion(density, max_resolution_ground_truth)
+
+grid_title = ''.join(str(i)+'x' for i in test_resolution[1])[:-1]
+title = 'FF(woFgt_test)_s'+str(scale)+'_'+forgetting_title+str(rate)+'_'+grid_title+'_'+str(actual_steps)
+title +=  '_'+problem_name+'_octRho'+str(n_octaves)+'x'+str(rho)+'_'+sampling_mode+'x'+str(sampling_rate)
+visualizations.density_vis(density, compliance_loss, tuple(test_resolution[1]), title, True, visualize, True,
+                           binary_loss=None, path=log_image_path)
+title = 'FF(woFgt_overall)_s'+str(scale)+'_'+forgetting_title+str(rate)+'_'+grid_title+'_'+str(actual_steps)
+title +=  '_'+problem_name+'_octRho'+str(n_octaves)+'x'+str(rho)+'_'+sampling_mode+'x'+str(sampling_rate)
 compliance_loss_array.append(compliance_loss)
 title = visualizations.loss_vis(compliance_loss_array, title, True, path=log_loss_path)
 
-utils.save_weights(model, append_path[:-1] if args.jid is None else args.jid, save_model, path=log_weights_path)
+title = 'GT_'+problem_name+'_octRho'+str(n_octaves)+'x'+str(rho)+'_'+sampling_mode+'x'+str(sampling_rate)
+visualizations.density_vis(max_resolution_ground_truth.cpu(), 0.0, max_resolution_ground_truth.shape, title, False, True, True,
+                           None, log_image_path)
 
-# utils.save_densities(density, gridDimensions, title, save_density, True, path='logs/densities/fourfeat_multires/')
+utils.save_weights(model, append_path[:-1] if args.jid is None else args.jid, save_model, path=log_weights_path)

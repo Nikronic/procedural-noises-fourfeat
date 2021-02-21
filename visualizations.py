@@ -37,20 +37,20 @@ def loss_vis(compliance_loss_array, title, save=True, path=None):
     if os.path.isfile(path + title + '.png'):
         title_ += str(int(datetime.timestamp(datetime.now())))
     if save:
-        plt.rcParams.update({'font.size': 18})
+        plt.rcParams.update({'font.size': 13})
         plt.figure(figsize=(14, 10))
-        plt.plot(np.arange(0, len(compliance_loss_array)), compliance_loss_array, label='compliance loss')
-        plt.title('Compliance')
+        plt.plot(np.arange(0, len(compliance_loss_array)), compliance_loss_array, label='loss')
+        plt.title('Loss')
         plt.xlabel('Iteration')
-        plt.ylabel('Compliance Loss')
-        plt.ylim(0, 5000)
-        plt.suptitle(title, fontsize=18)
+        plt.ylabel('Loss')
+        plt.ylim(0, 1000)
+        plt.suptitle(title, fontsize=13)
         plt.savefig(path + title_ + '.png')
         plt.close()
     return title_
 
 def density_vis(density, loss, gridDimensions, title, prediction=True, save=True, same_size=True, binary_loss=None, path=None):
-    plt.rcParams.update({'font.size': 18})
+    plt.rcParams.update({'font.size': 13})
 
     ratio = gridDimensions[0] / gridDimensions[1]
     # for including titles properly (not related to solution)
@@ -65,16 +65,16 @@ def density_vis(density, loss, gridDimensions, title, prediction=True, save=True
             plt.figure(figsize=(ratio * 5, ratio//ratio * 5 + 1))
         else:
             plt.figure(figsize=(gridDimensions[0]/10, gridDimensions[1]/10+1))
-        pred_density = -density.view(gridDimensions).detach().cpu().numpy()[:, :].T
+        pred_density = density.view(gridDimensions).detach().cpu().numpy()[:, :]
         plt.imshow(pred_density, cmap='gray')
         if binary_loss is not None:
-            plt.title('Prediction (loss={:.3f}, b-loss={:.3f}, vol={:.3f})'.format(loss, binary_loss, -pred_density.mean())) 
+            plt.title('Prediction (loss={:.3f}, b-loss={:.3f})'.format(loss, binary_loss)) 
         else:   
-            plt.title('Prediction (loss={:.3f}, vol={:.3f})'.format(loss, -pred_density.mean()))
+            plt.title('Prediction (loss={:.3f})'.format(loss))
         plt.suptitle('Prediction ('+title+')', fontsize=13)
 
         if save:
-            plt.suptitle(title, fontsize=18)
+            plt.suptitle(title, fontsize=13)
             title_ = title
             if os.path.isfile(path + title + '.png'):
                 title_ += str(int(datetime.timestamp(datetime.now())))
@@ -86,7 +86,7 @@ def density_vis(density, loss, gridDimensions, title, prediction=True, save=True
         else:
             plt.figure(figsize=(gridDimensions[0]/10, gridDimensions[1]/10+1))
         
-        plt.imshow(-density.reshape(gridDimensions[0], gridDimensions[1]).T, cmap='gray')
+        plt.imshow(density.reshape(gridDimensions[0], gridDimensions[1]), cmap='gray')
 
         if save:
             if binary_loss is not None:
