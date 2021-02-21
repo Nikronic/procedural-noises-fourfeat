@@ -1,0 +1,53 @@
+Experiment ID: 3986312
+Problem configs: 
+Problem Name: OctaveSimplexPerlin, Number of Octaves: 4, Rho: 2
+Sampling Rate: 0.05 using deterministic Sampling Method
+Perlin Noise Input Grid: [18 18], Output Grid: [288 288]resolution order: ftc, epoch mode: constant
+forgetting_weights: None, forgetting_activations: dropout, rate: 0.0
+repeat resolutions: 5 times 
+image path: logs/images/fourfeat/3986312/, loss path: logs/loss/fourfeat/3986312/
+scale: [5.0], fourier embedding size: 256
+Deep learning model config: MLP(
+  (net): Sequential(
+    (0): Linear(in_features=512, out_features=256, bias=True)
+    (1): ReLU()
+    (2): Linear(in_features=256, out_features=256, bias=True)
+    (3): ReLU()
+    (4): Linear(in_features=256, out_features=256, bias=True)
+    (5): ReLU()
+    (6): Linear(in_features=256, out_features=1, bias=True)
+  )
+)
+Criterion: MSELoss(), DL optim: Adam (
+Parameter Group 0
+    amsgrad: False
+    betas: (0.9, 0.999)
+    eps: 1e-08
+    lr: 0.0001
+    weight_decay: 0
+), LR scheduler: None
+L2 Regularization: 0
+Activation forgetting "dropout -> rate=0.0"  has been applied. 
+Training:   0%|          | 0/1500 [00:00<?, ?it/s]Training:   0%|          | 0/1500 [00:00<?, ?it/s]
+Traceback (most recent call last):
+  File "/HPS/deep_topopt/work/procedural-noises-fourfeat/training/train_fourfeat.py", line 224, in <module>
+    optim.step(closure)
+  File "/HPS/deep_topopt/static00/anaconda_envs/pnf_py37/lib/python3.7/site-packages/torch/autograd/grad_mode.py", line 26, in decorate_context
+    return func(*args, **kwargs)
+  File "/HPS/deep_topopt/static00/anaconda_envs/pnf_py37/lib/python3.7/site-packages/torch/optim/adam.py", line 66, in step
+    loss = closure()
+  File "/HPS/deep_topopt/work/procedural-noises-fourfeat/training/train_fourfeat.py", line 184, in closure
+    model_input, ground_truth = next(iter(dataloader))
+  File "/HPS/deep_topopt/static00/anaconda_envs/pnf_py37/lib/python3.7/site-packages/torch/utils/data/dataloader.py", line 435, in __next__
+    data = self._next_data()
+  File "/HPS/deep_topopt/static00/anaconda_envs/pnf_py37/lib/python3.7/site-packages/torch/utils/data/dataloader.py", line 475, in _next_data
+    data = self._dataset_fetcher.fetch(index)  # may raise StopIteration
+  File "/HPS/deep_topopt/static00/anaconda_envs/pnf_py37/lib/python3.7/site-packages/torch/utils/data/_utils/fetch.py", line 44, in fetch
+    data = [self.dataset[idx] for idx in possibly_batched_index]
+  File "/HPS/deep_topopt/static00/anaconda_envs/pnf_py37/lib/python3.7/site-packages/torch/utils/data/_utils/fetch.py", line 44, in <listcomp>
+    data = [self.dataset[idx] for idx in possibly_batched_index]
+  File "/HPS/deep_topopt/work/procedural-noises-fourfeat/training/../utils.py", line 151, in __getitem__
+    return self.sample()
+  File "/HPS/deep_topopt/work/procedural-noises-fourfeat/training/../utils.py", line 155, in sample
+    mask = self.mask
+AttributeError: 'PerlinMeshGrid' object has no attribute 'mask'
